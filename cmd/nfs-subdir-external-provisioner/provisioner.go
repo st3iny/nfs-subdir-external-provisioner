@@ -78,7 +78,9 @@ const (
 
 var _ controller.Provisioner = &nfsProvisioner{}
 
-func (p *nfsProvisioner) Provision(ctx context.Context, options controller.ProvisionOptions) (*v1.PersistentVolume, controller.ProvisioningState, error) {
+func (p *nfsProvisioner) Provision(
+	ctx context.Context, options controller.ProvisionOptions,
+) (*v1.PersistentVolume, controller.ProvisioningState, error) {
 	if options.PVC.Spec.Selector != nil {
 		return nil, controller.ProvisioningFinished, fmt.Errorf("claim Selector is not supported")
 	}
@@ -110,11 +112,40 @@ func (p *nfsProvisioner) Provision(ctx context.Context, options controller.Provi
 		}
 	}
 
-	glog.V(4).Infof("creating path %s", fullPath)
+	mode := os.FileMode(0777)
+	modeAnnotation, exists := metadata.annotations["nfs.io/mode"]
+	if exists {
+		parsedFileMode, err := strconv.ParseUint(modeAnnotation, 8, 32)
+		if err == nil {
+			mode = os.FileMode(parsedFileMode)
+		}
+	}
+
+	uid := -1
+	uidAnnotation, exists := metadata.annotations["nfs.io/uid"]
+	if exists {
+		uid, _ = strconv.Atoi(uidAnnotation)
+	}
+
+	gid := -1
+	gidAnnotation, exists := metadata.annotations["nfs.io/gid"]
+	if exists {
+		gid, _ = strconv.Atoi(gidAnnotation)
+	}
+
+	glog.V(4).Infof("creating path %s with mode %#o, uid %d and gid %d", fullPath, mode, uid, gid)
+
 	if err := os.MkdirAll(fullPath, 0777); err != nil {
 		return nil, controller.ProvisioningFinished, errors.New("unable to create directory to provision new pv: " + err.Error())
 	}
-	os.Chmod(fullPath, 0777)
+
+	if err := os.Chmod(fullPath, mode); err != nil {
+		glog.Warningf("could not set mode, chmod skipped")
+	}
+
+	if err := os.Chown(fullPath, uid, gid); err != nil {
+		glog.Warningf("could not set uid and gid, chown skipped")
+	}
 
 	pv := &v1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
@@ -187,7 +218,9 @@ func (p *nfsProvisioner) Delete(ctx context.Context, volume *v1.PersistentVolume
 }
 
 // getClassForVolume returns StorageClass
-func (p *nfsProvisioner) getClassForVolume(ctx context.Context, pv *v1.PersistentVolume) (*storage.StorageClass, error) {
+func (p *nfsProvisioner) getClassForVolume(
+	ctx context.Context, pv *v1.PersistentVolume,
+) (*storage.StorageClass, error) {
 	if p.client == nil {
 		return nil, fmt.Errorf("Cannot get kube client")
 	}
@@ -265,7 +298,8 @@ func main() {
 	}
 	// Start the provision controller which will dynamically provision efs NFS
 	// PVs
-	pc := controller.NewProvisionController(clientset,
+	pc := controller.NewProvisionController(
+		clientset,
 		provisionerName,
 		clientNFSProvisioner,
 		serverVersion.GitVersion,

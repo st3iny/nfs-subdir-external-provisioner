@@ -165,6 +165,9 @@ metadata:
   name: test-claim
   annotations:
     nfs.io/storage-path: "test-path" # not required, depending on whether this annotation was shown in the storage class description
+    nfs.io/uid: "1000" # set folder uid on creation, not required, default 0 (root)
+    nfs.io/gid: "1000" # set folder gid on creation, not required, default 0 (root)
+    nfs.io/mode: "0750" # set folder mode on creation, not required, default 0777 (a+rwx)
 spec:
   storageClassName: nfs-client
   accessModes:
